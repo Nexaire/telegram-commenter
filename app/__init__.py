@@ -1,0 +1,2 @@
+"""Semi-automatic Telegram commenter."""
+

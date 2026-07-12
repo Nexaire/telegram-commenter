@@ -1,0 +1,7 @@
+telethon==1.40.0
+python-telegram-bot==22.2
+gigachat>=0.1.43,<1.0
+aiosqlite==0.21.0
+pydantic-settings==2.10.1
+PyYAML==6.0.2
+structlog==25.4.0

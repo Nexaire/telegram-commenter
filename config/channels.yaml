@@ -1,0 +1,6 @@
+channels:
+  # Public username or a numeric Telegram entity ID accessible to the user account.
+  - username: example_channel
+    enabled: false
+    expertise: "AI automation and business processes"
+
