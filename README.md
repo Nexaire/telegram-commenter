@@ -143,7 +143,9 @@ python -m app.main
 docker compose logs -f --tail=200 commenter
 ```
 
-SQLite хранится в `./data/commenter.db`. Статусы: `pending`, `skipped`, `scheduled`, `published`, `dry_run`, `filtered`, `permission_error`, `error`.
+SQLite хранится в `./data/commenter.db`. Статусы: `pending`, `skipped`, `scheduled`, `published`, `deleted`, `dry_run`, `filtered`, `permission_error`, `error`.
+
+После реальной публикации сервис сохраняет ID комментария и проверяет его наличие каждые `PUBLISHED_AUDIT_SECONDS` секунд. Удалённые комментарии получают статус `deleted`. Ежедневный отчёт за завершившиеся сутки отправляется approval-ботом в `DAILY_REPORT_HOUR:DAILY_REPORT_MINUTE` часового пояса `DAILY_REPORT_TIMEZONE` (по умолчанию в 00:05 по Москве).
 
 ## 7. Развёртывание на Ubuntu VPS
 

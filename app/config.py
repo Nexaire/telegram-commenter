@@ -29,6 +29,10 @@ class Settings(BaseSettings):
     publish_delay_max_seconds: int = 600
     monitor_lookback_hours: int = 24
     monitor_poll_seconds: int = 300
+    published_audit_seconds: int = 900
+    daily_report_timezone: str = "Europe/Moscow"
+    daily_report_hour: int = 0
+    daily_report_minute: int = 5
     blacklist_topics: list[str] = []
     brand_names: list[str] = []
     send_as_channel: str | None = None
@@ -46,6 +50,20 @@ class Settings(BaseSettings):
         minimum = info.data.get("publish_delay_min_seconds", 0)
         if value < minimum:
             raise ValueError("PUBLISH_DELAY_MAX_SECONDS must be >= minimum")
+        return value
+
+    @field_validator("daily_report_hour")
+    @classmethod
+    def valid_report_hour(cls, value):
+        if not 0 <= value <= 23:
+            raise ValueError("DAILY_REPORT_HOUR must be between 0 and 23")
+        return value
+
+    @field_validator("daily_report_minute")
+    @classmethod
+    def valid_report_minute(cls, value):
+        if not 0 <= value <= 59:
+            raise ValueError("DAILY_REPORT_MINUTE must be between 0 and 59")
         return value
 
     def channels(self) -> list[dict]:

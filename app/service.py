@@ -24,7 +24,12 @@ class CommenterService:
             self.entities[peer_id] = entity
         self.client.add_event_handler(self.on_message, events.NewMessage(chats=list(self.entities.values())))
         await self.catch_up()
-        await asyncio.gather(self.publisher_loop(), self.poll_loop(), self.client.run_until_disconnected())
+        await asyncio.gather(
+            self.publisher_loop(),
+            self.audit_loop(),
+            self.poll_loop(),
+            self.client.run_until_disconnected(),
+        )
 
     async def poll_loop(self):
         while True:
@@ -66,6 +71,40 @@ class CommenterService:
             for post in rows: await self.publish(post)
             await asyncio.sleep(5)
 
+    async def audit_loop(self):
+        while True:
+            await self.audit_published()
+            await asyncio.sleep(self.s.published_audit_seconds)
+
+    async def audit_published(self):
+        rows = await self.db.all(
+            "SELECT * FROM posts WHERE status='published' "
+            "AND published_peer_id IS NOT NULL AND published_message_id IS NOT NULL"
+        )
+        for post in rows:
+            checked_at = datetime.now(timezone.utc).isoformat()
+            try:
+                message = await self.client.get_messages(
+                    post["published_peer_id"], ids=post["published_message_id"]
+                )
+                if message is None:
+                    await self.db.execute(
+                        "UPDATE posts SET status='deleted', deleted_at=?, last_checked_at=?, audit_error=NULL WHERE id=?",
+                        (checked_at, checked_at, post["id"]),
+                    )
+                    log.warning("published_comment_deleted", post_id=post["id"])
+                else:
+                    await self.db.execute(
+                        "UPDATE posts SET last_checked_at=?, audit_error=NULL WHERE id=?",
+                        (checked_at, post["id"]),
+                    )
+            except Exception as exc:
+                await self.db.execute(
+                    "UPDATE posts SET last_checked_at=?, audit_error=? WHERE id=?",
+                    (checked_at, str(exc)[:1000], post["id"]),
+                )
+                log.exception("published_comment_audit_failed", post_id=post["id"])
+
     async def publish(self, post):
         variants = json.loads(post["variants_json"])
         try:
@@ -77,8 +116,14 @@ class CommenterService:
             result = await self.client(functions.messages.GetDiscussionMessageRequest(peer=post["channel_id"], msg_id=post["message_id"]))
             discussion = result.messages[0]
             send_as = await self.client.get_entity(self.s.send_as_channel) if self.s.send_as_channel else None
-            await self.client.send_message(discussion.peer_id, comment, reply_to=discussion.id, send_as=send_as)
-            await self.db.execute("UPDATE posts SET status='published', published_at=?, error=NULL WHERE id=?", (datetime.now(timezone.utc).isoformat(), post["id"]))
+            sent = await self.client.send_message(discussion.peer_id, comment, reply_to=discussion.id, send_as=send_as)
+            published_peer_id = utils.get_peer_id(discussion.peer_id)
+            await self.db.execute(
+                "UPDATE posts SET status='published', published_at=?, published_peer_id=?, "
+                "published_message_id=?, last_checked_at=?, error=NULL, audit_error=NULL WHERE id=?",
+                (datetime.now(timezone.utc).isoformat(), published_peer_id, sent.id,
+                 datetime.now(timezone.utc).isoformat(), post["id"]),
+            )
             log.info("published", post_id=post["id"])
         except errors.FloodWaitError as exc:
             retry = datetime.now(timezone.utc) + timedelta(seconds=exc.seconds + 5)

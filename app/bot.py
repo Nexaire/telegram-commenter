@@ -1,9 +1,15 @@
 import json
+import asyncio
 import random
-from datetime import datetime, timedelta, timezone
+from collections import Counter
+from datetime import datetime, time, timedelta, timezone
+from zoneinfo import ZoneInfo
 
+import structlog
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import Application, CallbackQueryHandler, ContextTypes
+
+log = structlog.get_logger()
 
 
 class ApprovalBot:
@@ -11,6 +17,7 @@ class ApprovalBot:
         self.settings, self.db = settings, db
         self.app = Application.builder().token(settings.approval_bot_token).build()
         self.app.add_handler(CallbackQueryHandler(self.on_action, pattern=r"^(pub|next|skip):\d+$"))
+        self.report_task = None
 
     def keyboard(self, post_id):
         return InlineKeyboardMarkup([[
@@ -54,7 +61,72 @@ class ApprovalBot:
 
     async def start(self):
         await self.app.initialize(); await self.app.start(); await self.app.updater.start_polling(drop_pending_updates=True)
+        self.report_task = asyncio.create_task(self.daily_report_loop())
 
     async def stop(self):
+        if self.report_task:
+            self.report_task.cancel()
+            try:
+                await self.report_task
+            except asyncio.CancelledError:
+                pass
         await self.app.updater.stop(); await self.app.stop(); await self.app.shutdown()
 
+    async def daily_report_loop(self):
+        while True:
+            try:
+                await self.send_due_daily_report()
+            except Exception:
+                # Ошибка отчёта не должна останавливать основной сервис.
+                log.exception("daily_report_failed")
+            await asyncio.sleep(60)
+
+    async def send_due_daily_report(self):
+        tz = ZoneInfo(self.settings.daily_report_timezone)
+        now = datetime.now(tz)
+        report_time = time(self.settings.daily_report_hour, self.settings.daily_report_minute)
+        if now.time() < report_time:
+            return
+        report_date = now.date() - timedelta(days=1)
+        if await self.db.meta("last_daily_report_date") == report_date.isoformat():
+            return
+
+        start_local = datetime.combine(report_date, time.min, tzinfo=tz)
+        end_local = start_local + timedelta(days=1)
+        start = start_local.astimezone(timezone.utc).isoformat()
+        end = end_local.astimezone(timezone.utc).isoformat()
+        rows = await self.db.all(
+            "SELECT * FROM posts WHERE (created_at>=? AND created_at<?) "
+            "OR (published_at>=? AND published_at<?) OR (deleted_at>=? AND deleted_at<?)",
+            (start, end, start, end, start, end),
+        )
+        statuses = Counter(row["status"] for row in rows if start <= row["created_at"] < end)
+        published = sum(1 for row in rows if row["published_at"] and start <= row["published_at"] < end)
+        deleted = [row for row in rows if row["deleted_at"] and start <= row["deleted_at"] < end]
+        failed = [row for row in rows if row["status"] in ("error", "permission_error")]
+
+        lines = [
+            f"Отчёт за {report_date.strftime('%d.%m.%Y')}",
+            "",
+            f"Опубликовано: {published}",
+            f"Удалено: {len(deleted)}",
+            f"Не опубликовано из-за ошибок: {len(failed)}",
+            f"Пропущено вручную: {statuses['skipped']}",
+            f"Отфильтровано: {statuses['filtered']}",
+            f"Ожидает подтверждения: {statuses['pending']}",
+            f"Запланировано: {statuses['scheduled']}",
+            f"Dry run: {statuses['dry_run']}",
+        ]
+        if deleted:
+            lines.extend(["", "Удалённые:"])
+            lines.extend(f"• #{row['id']} — {row['channel_title']}" for row in deleted[:10])
+        if failed:
+            lines.extend(["", "Ошибки:"])
+            lines.extend(
+                f"• #{row['id']} — {row['channel_title']}: {(row['error'] or row['status'])[:160]}"
+                for row in failed[:10]
+            )
+        report = "\n".join(lines)
+        for user_id in self.settings.approver_user_ids:
+            await self.app.bot.send_message(user_id, report)
+        await self.db.set_meta("last_daily_report_date", report_date.isoformat())

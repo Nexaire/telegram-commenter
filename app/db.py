@@ -14,7 +14,16 @@ CREATE TABLE IF NOT EXISTS posts (
  UNIQUE(channel_id, message_id)
 );
 CREATE INDEX IF NOT EXISTS idx_posts_status ON posts(status, scheduled_at);
+CREATE TABLE IF NOT EXISTS app_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 """
+
+POST_MIGRATIONS = {
+    "published_peer_id": "INTEGER",
+    "published_message_id": "INTEGER",
+    "last_checked_at": "TEXT",
+    "deleted_at": "TEXT",
+    "audit_error": "TEXT",
+}
 
 
 class Database:
@@ -25,6 +34,10 @@ class Database:
         Path(self.path).parent.mkdir(parents=True, exist_ok=True)
         async with aiosqlite.connect(self.path) as db:
             await db.executescript(SCHEMA)
+            columns = {row[1] for row in await (await db.execute("PRAGMA table_info(posts)")).fetchall()}
+            for name, sql_type in POST_MIGRATIONS.items():
+                if name not in columns:
+                    await db.execute(f"ALTER TABLE posts ADD COLUMN {name} {sql_type}")
             await db.commit()
 
     async def add_post(self, channel_id, message_id, title, text, expertise) -> int | None:
@@ -64,3 +77,12 @@ class Database:
         row = await self.one("SELECT COUNT(*) AS n FROM posts WHERE status IN ('scheduled','published','dry_run') AND date(COALESCE(published_at,scheduled_at))=date('now')")
         return int(row["n"])
 
+    async def meta(self, key: str) -> str | None:
+        row = await self.one("SELECT value FROM app_meta WHERE key=?", (key,))
+        return row["value"] if row else None
+
+    async def set_meta(self, key: str, value: str):
+        await self.execute(
+            "INSERT INTO app_meta(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            (key, value),
+        )
