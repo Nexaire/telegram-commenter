@@ -31,7 +31,18 @@ def test_accepts_clean_comment():
     assert generator().validate("A concrete useful observation.") == "A concrete useful observation."
 
 
-@pytest.mark.parametrize("label", ["Комментарий 1: ", "Вариант №2 — ", "Comment 2. "])
+@pytest.mark.parametrize(
+    "label",
+    [
+        "Комментарий 1: ",
+        "Вариант №2 — ",
+        "Comment 2. ",
+        "**Комментарий 1:**\n",
+        "- **Комментарий № 2** — ",
+        "• Вариант #1: ",
+        "Комментарий: ",
+    ],
+)
 def test_removes_comment_label(label):
     assert generator().validate(label + "Конкретная полезная мысль.") == "Конкретная полезная мысль."
 
