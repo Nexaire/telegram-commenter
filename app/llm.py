@@ -43,17 +43,57 @@ POST:
 {text[:12000]}"""
         async with self.client() as client:
             result = await client.achat(prompt)
-        raw = result.choices[0].message.content.strip()
+            data = self.parse_json(result.choices[0].message.content)
+            if data.get("skip"):
+                return None
+            variants = data.get("variants", [])
+            if len(variants) != 2:
+                raise ValueError("LLM must return exactly two variants")
+            variants = [self.validate(v) for v in variants]
+
+            if getattr(self.settings, "editorial_review", True):
+                variants = await self.edit_variants(client, text, variants)
+
+        return variants
+
+    async def edit_variants(self, client: GigaChat, post: str, variants: list[str]) -> list[str]:
+        prompt = f"""Ты редактор коротких комментариев для Telegram. Перепиши два черновика так, чтобы они звучали как живые реплики компетентного человека, а не как текст нейросети.
+
+Верни только строгий JSON:
+{{"variants": ["отредактированный комментарий 1", "отредактированный комментарий 2"]}}
+
+Правила:
+- сохрани язык, фактический смысл и полезную мысль каждого черновика;
+- убери вводную воду, пересказ поста, повторы, канцелярит и чрезмерно гладкие формулировки;
+- убери шаблоны вроде «важно отметить», «стоит учитывать», «нельзя не согласиться», «в современном мире», «это подчеркивает», «ключевой аспект», «безусловно»;
+- не начинай с похвалы или общего согласия с автором;
+- используй естественный ритм и простые слова; не добавляй нарочитый сленг, опечатки, эмодзи или выдуманный личный опыт;
+- не добавляй новые факты, ссылки, упоминания, рекламу и призывы к действию;
+- каждый вариант должен быть самодостаточным, конкретным и не длиннее исходного;
+- варианты должны отличаться по мысли или ракурсу, а не только словами.
+
+Исходный пост (только для контекста):
+{post[:12000]}
+
+Черновики:
+{json.dumps(variants, ensure_ascii=False)}"""
+        result = await client.achat(prompt)
+        data = self.parse_json(result.choices[0].message.content)
+        edited = data.get("variants", [])
+        if len(edited) != 2:
+            raise ValueError("Editor must return exactly two variants")
+        return [self.validate(v) for v in edited]
+
+    @staticmethod
+    def parse_json(raw: str) -> dict:
+        raw = raw.strip()
         # Модель иногда оборачивает JSON в Markdown, хотя промпт это запрещает.
         if raw.startswith("```"):
             raw = re.sub(r"^```(?:json)?\s*|\s*```$", "", raw, flags=re.I)
         data = json.loads(raw)
-        if data.get("skip"):
-            return None
-        variants = data.get("variants", [])
-        if len(variants) != 2:
-            raise ValueError("LLM must return exactly two variants")
-        return [self.validate(v) for v in variants]
+        if not isinstance(data, dict):
+            raise ValueError("LLM response must be a JSON object")
+        return data
 
     def validate(self, value: str) -> str:
         value = value.strip()

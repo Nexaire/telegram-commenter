@@ -33,3 +33,13 @@ def test_accepts_clean_comment():
 
 def test_rejects_direct_advertising():
     with pytest.raises(ValueError): generator().validate("Подпишитесь на наш канал")
+
+
+def test_parses_json_in_markdown_fence():
+    data = generator().parse_json('```json\n{"variants": ["one", "two"]}\n```')
+    assert data == {"variants": ["one", "two"]}
+
+
+def test_rejects_non_object_json():
+    with pytest.raises(ValueError):
+        generator().parse_json('["one", "two"]')

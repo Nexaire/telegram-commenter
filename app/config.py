@@ -19,6 +19,7 @@ class Settings(BaseSettings):
     gigachat_base_url: str = "https://gigachat.devices.sberbank.ru/api/v1"
     gigachat_verify_ssl_certs: bool = False
     gigachat_ca_bundle_file: str | None = None
+    editorial_review: bool = True
     database_path: str = "./data/commenter.db"
     channels_config: str = "./config/channels.yaml"
     log_level: str = "INFO"
