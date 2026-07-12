@@ -16,7 +16,9 @@ class ApprovalBot:
     def __init__(self, settings, db, generator):
         self.settings, self.db, self.generator = settings, db, generator
         self.app = Application.builder().token(settings.approval_bot_token).build()
+        self.lead_app = Application.builder().token(settings.lead_bot_token).build()
         self.app.add_handler(CallbackQueryHandler(self.on_action, pattern=r"^(pub|next|edit|skip):\d+$"))
+        self.lead_app.add_handler(CallbackQueryHandler(self.on_lead_action, pattern=r"^lead:(work|ignore):\d+$"))
         self.app.add_handler(CommandHandler("cancel", self.cancel_edit))
         self.app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self.on_edit_text))
         self.report_task = None
@@ -47,6 +49,48 @@ class ApprovalBot:
         body = self.approval_body(post, variants)
         for user_id in self.settings.approver_user_ids:
             await self.app.bot.send_message(user_id, body, reply_markup=self.keyboard(post_id))
+
+    @staticmethod
+    def lead_keyboard(lead, active=True):
+        rows = [[InlineKeyboardButton("Открыть комментарий", url=lead["comment_url"])]]
+        if active:
+            rows.append([
+                InlineKeyboardButton("В работу", callback_data=f"lead:work:{lead['id']}"),
+                InlineKeyboardButton("Не лид", callback_data=f"lead:ignore:{lead['id']}"),
+            ])
+        return InlineKeyboardMarkup(rows)
+
+    async def send_lead(self, lead):
+        username = f"@{lead['sender_username']}" if lead["sender_username"] else "username скрыт"
+        terms = ", ".join(json.loads(lead["matched_terms_json"]))
+        body = (
+            f"Новый потенциальный клиент\n\nКанал: {lead['channel_title']}"
+            f"\nПользователь: {lead['sender_name']} ({username})"
+            f"\nСовпадения: {terms}\n\nКомментарий:\n{lead['text'][:2000]}"
+        )
+        for user_id in self.settings.approver_user_ids:
+            await self.lead_app.bot.send_message(
+                user_id, body, reply_markup=self.lead_keyboard(lead), disable_web_page_preview=True
+            )
+
+    async def on_lead_action(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        q = update.callback_query
+        if q.from_user.id not in self.settings.approver_user_ids:
+            await q.answer("Нет доступа", show_alert=True)
+            return
+        _, action, raw_id = q.data.split(":")
+        lead_id = int(raw_id)
+        lead = await self.db.one("SELECT * FROM leads WHERE id=?", (lead_id,))
+        if not lead or lead["status"] != "new":
+            await q.answer("Лид уже обработан", show_alert=True)
+            return
+        status = "in_progress" if action == "work" else "irrelevant"
+        await self.db.execute(
+            "UPDATE leads SET status=?, reviewed_at=? WHERE id=?",
+            (status, datetime.now(timezone.utc).isoformat(), lead_id),
+        )
+        await q.edit_message_reply_markup(self.lead_keyboard(lead, active=False))
+        await q.answer("Добавлен в работу" if action == "work" else "Помечен как не лид")
 
     async def on_action(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         q = update.callback_query
@@ -114,14 +158,23 @@ class ApprovalBot:
             "UPDATE posts SET variants_json=? WHERE id=?",
             (json.dumps(variants, ensure_ascii=False), post_id),
         )
+        edit_chat_id = context.user_data["edit_chat_id"]
+        edit_message_id = context.user_data["edit_message_id"]
         await self.app.bot.edit_message_text(
-            chat_id=context.user_data["edit_chat_id"],
-            message_id=context.user_data["edit_message_id"],
+            chat_id=edit_chat_id,
+            message_id=edit_message_id,
             text=self.approval_body(post, variants),
             reply_markup=self.keyboard(post_id),
         )
         self.clear_edit(context)
-        await update.message.reply_text("Комментарий обновлён. Теперь его можно опубликовать.")
+        await self.app.bot.send_message(
+            chat_id=edit_chat_id,
+            text="Комментарий обновлён. Нажмите на цитату, чтобы вернуться к карточке, или опубликуйте сразу.",
+            reply_to_message_id=edit_message_id,
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("Опубликовать", callback_data=f"pub:{post_id}")
+            ]]),
+        )
 
     async def cancel_edit(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if context.user_data.get("edit_post_id"):
@@ -135,6 +188,8 @@ class ApprovalBot:
 
     async def start(self):
         await self.app.initialize(); await self.app.start(); await self.app.updater.start_polling(drop_pending_updates=True)
+        await self.lead_app.initialize(); await self.lead_app.start()
+        await self.lead_app.updater.start_polling(drop_pending_updates=True)
         self.report_task = asyncio.create_task(self.daily_report_loop())
 
     async def stop(self):
@@ -145,11 +200,13 @@ class ApprovalBot:
             except asyncio.CancelledError:
                 pass
         await self.app.updater.stop(); await self.app.stop(); await self.app.shutdown()
+        await self.lead_app.updater.stop(); await self.lead_app.stop(); await self.lead_app.shutdown()
 
     async def daily_report_loop(self):
         while True:
             try:
                 await self.send_due_daily_report()
+                await self.send_due_lead_report()
             except Exception:
                 # Ошибка отчёта не должна останавливать основной сервис.
                 log.exception("daily_report_failed")
@@ -204,3 +261,38 @@ class ApprovalBot:
         for user_id in self.settings.approver_user_ids:
             await self.app.bot.send_message(user_id, report)
         await self.db.set_meta("last_daily_report_date", report_date.isoformat())
+
+    async def send_due_lead_report(self):
+        tz = ZoneInfo(self.settings.daily_report_timezone)
+        now = datetime.now(tz)
+        report_time = time(self.settings.lead_report_hour, self.settings.lead_report_minute)
+        if now.time() < report_time:
+            return
+        report_date = now.date()
+        if await self.db.meta("last_lead_report_date") == report_date.isoformat():
+            return
+        end = now.astimezone(timezone.utc)
+        start = end - timedelta(hours=24)
+        rows = await self.db.all(
+            "SELECT * FROM leads WHERE created_at>=? AND created_at<? ORDER BY created_at DESC",
+            (start.isoformat(), end.isoformat()),
+        )
+        statuses = Counter(row["status"] for row in rows)
+        lines = [
+            f"Утренний отчёт по лидам — {report_date.strftime('%d.%m.%Y')}",
+            "",
+            f"Найдено за 24 часа: {len(rows)}",
+            f"Новые: {statuses['new']}",
+            f"В работе: {statuses['in_progress']}",
+            f"Не лид: {statuses['irrelevant']}",
+        ]
+        if rows:
+            lines.extend(["", "Последние лиды:"])
+            for lead in rows[:15]:
+                username = f"@{lead['sender_username']}" if lead["sender_username"] else lead["sender_name"]
+                preview = " ".join(lead["text"].split())[:120]
+                lines.append(f"• {username} — {lead['channel_title']}: {preview}\n{lead['comment_url']}")
+        report = "\n".join(lines)
+        for user_id in self.settings.approver_user_ids:
+            await self.lead_app.bot.send_message(user_id, report, disable_web_page_preview=True)
+        await self.db.set_meta("last_lead_report_date", report_date.isoformat())

@@ -15,6 +15,16 @@ CREATE TABLE IF NOT EXISTS posts (
 );
 CREATE INDEX IF NOT EXISTS idx_posts_status ON posts(status, scheduled_at);
 CREATE TABLE IF NOT EXISTS app_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS leads (
+ id INTEGER PRIMARY KEY AUTOINCREMENT,
+ discussion_id INTEGER NOT NULL, message_id INTEGER NOT NULL,
+ channel_id INTEGER, channel_title TEXT NOT NULL, post_message_id INTEGER,
+ text TEXT NOT NULL, sender_id INTEGER, sender_name TEXT NOT NULL,
+ sender_username TEXT, comment_url TEXT NOT NULL, matched_terms_json TEXT NOT NULL,
+ status TEXT NOT NULL DEFAULT 'new', created_at TEXT NOT NULL, reviewed_at TEXT,
+ UNIQUE(discussion_id, message_id)
+);
+CREATE INDEX IF NOT EXISTS idx_leads_status_created ON leads(status, created_at);
 """
 
 POST_MIGRATIONS = {
@@ -86,3 +96,23 @@ class Database:
             "INSERT INTO app_meta(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
             (key, value),
         )
+
+    async def add_lead(self, **lead) -> int | None:
+        try:
+            async with aiosqlite.connect(self.path) as db:
+                cur = await db.execute(
+                    "INSERT INTO leads(discussion_id,message_id,channel_id,channel_title,post_message_id,"
+                    "text,sender_id,sender_name,sender_username,comment_url,matched_terms_json,created_at) "
+                    "VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+                    (
+                        lead["discussion_id"], lead["message_id"], lead.get("channel_id"),
+                        lead["channel_title"], lead.get("post_message_id"), lead["text"],
+                        lead.get("sender_id"), lead["sender_name"], lead.get("sender_username"),
+                        lead["comment_url"], json.dumps(lead["matched_terms"], ensure_ascii=False),
+                        datetime.now(timezone.utc).isoformat(),
+                    ),
+                )
+                await db.commit()
+                return cur.lastrowid
+        except aiosqlite.IntegrityError:
+            return None

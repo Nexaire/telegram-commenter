@@ -12,6 +12,7 @@ class Settings(BaseSettings):
     telegram_api_hash: str
     telegram_session: str = "./data/commenter.session"
     approval_bot_token: str
+    lead_bot_token: str
     approver_user_ids: list[int]
     gigachat_credentials: str
     gigachat_scope: str = "GIGACHAT_API_PERS"
@@ -33,6 +34,10 @@ class Settings(BaseSettings):
     daily_report_timezone: str = "Europe/Moscow"
     daily_report_hour: int = 0
     daily_report_minute: int = 5
+    lead_monitor_enabled: bool = True
+    lead_poll_seconds: int = 3600
+    lead_report_hour: int = 9
+    lead_report_minute: int = 0
     blacklist_topics: list[str] = []
     brand_names: list[str] = []
     send_as_channel: str | None = None
@@ -52,18 +57,18 @@ class Settings(BaseSettings):
             raise ValueError("PUBLISH_DELAY_MAX_SECONDS must be >= minimum")
         return value
 
-    @field_validator("daily_report_hour")
+    @field_validator("daily_report_hour", "lead_report_hour")
     @classmethod
     def valid_report_hour(cls, value):
         if not 0 <= value <= 23:
-            raise ValueError("DAILY_REPORT_HOUR must be between 0 and 23")
+            raise ValueError("Report hour must be between 0 and 23")
         return value
 
-    @field_validator("daily_report_minute")
+    @field_validator("daily_report_minute", "lead_report_minute")
     @classmethod
     def valid_report_minute(cls, value):
         if not 0 <= value <= 59:
-            raise ValueError("DAILY_REPORT_MINUTE must be between 0 and 59")
+            raise ValueError("Report minute must be between 0 and 59")
         return value
 
     def channels(self) -> list[dict]:
