@@ -31,6 +31,11 @@ def test_accepts_clean_comment():
     assert generator().validate("A concrete useful observation.") == "A concrete useful observation."
 
 
+@pytest.mark.parametrize("label", ["Комментарий 1: ", "Вариант №2 — ", "Comment 2. "])
+def test_removes_comment_label(label):
+    assert generator().validate(label + "Конкретная полезная мысль.") == "Конкретная полезная мысль."
+
+
 def test_rejects_direct_advertising():
     with pytest.raises(ValueError): generator().validate("Подпишитесь на наш канал")
 

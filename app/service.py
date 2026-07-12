@@ -68,11 +68,12 @@ class CommenterService:
 
     async def publish(self, post):
         variants = json.loads(post["variants_json"])
-        comment = variants[post["selected_variant"]]
-        if self.s.dry_run:
-            log.info("dry_run_publish", post_id=post["id"], comment=comment)
-            await self.db.execute("UPDATE posts SET status='dry_run', published_at=? WHERE id=?", (datetime.now(timezone.utc).isoformat(), post["id"])); return
         try:
+            # Повторная проверка очищает метки и защищает уже сохранённые в очереди варианты.
+            comment = self.generator.validate(variants[post["selected_variant"]])
+            if self.s.dry_run:
+                log.info("dry_run_publish", post_id=post["id"], comment=comment)
+                await self.db.execute("UPDATE posts SET status='dry_run', published_at=? WHERE id=?", (datetime.now(timezone.utc).isoformat(), post["id"])); return
             result = await self.client(functions.messages.GetDiscussionMessageRequest(peer=post["channel_id"], msg_id=post["message_id"]))
             discussion = result.messages[0]
             send_as = await self.client.get_entity(self.s.send_as_channel) if self.s.send_as_channel else None

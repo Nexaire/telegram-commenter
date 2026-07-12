@@ -10,6 +10,10 @@ AD_RE = re.compile(
     r"наш(?:а|и|е)? (?:услуг|продукт|курс)|subscribe|buy now|order now|contact us|our (?:service|product))\b",
     re.I,
 )
+COMMENT_LABEL_RE = re.compile(
+    r"^\s*(?:(?:комментарий|вариант|comment|variant)\s*(?:№\s*)?\d+\s*[:.)—-]?\s*)+",
+    re.I,
+)
 
 
 class CommentGenerator:
@@ -37,7 +41,7 @@ class CommentGenerator:
         prompt = f"""Analyze the Telegram post below. Return strict JSON only:
 {{"skip": false, "reason": "...", "variants": ["comment 1", "comment 2"]}}
 Set skip=true for advertising, memes, personal congratulations, conflict, sensitive claims, or these blacklisted topics: {black}.
-When not skipped, write exactly two distinct, concise expert comments in the post's language. Each must add a concrete insight, example, caveat, consequence, or thoughtful question. No praise filler, links, @mentions, calls to action, self-promotion, direct advertising, or these brand names: {brands}. Do not claim unverifiable personal experience.
+When not skipped, write exactly two distinct, concise expert comments in the post's language. Each must add a concrete insight, example, caveat, consequence, or thoughtful question. Return only the comment text inside each JSON string: never prefix it with labels such as "Comment 1", "Комментарий 1", or "Вариант 1". No praise filler, links, @mentions, calls to action, self-promotion, direct advertising, or these brand names: {brands}. Do not claim unverifiable personal experience.
 Expertise context: {expertise or 'general business and technology'}
 POST:
 {text[:12000]}"""
@@ -69,6 +73,7 @@ POST:
 - не начинай с похвалы или общего согласия с автором;
 - используй естественный ритм и простые слова; не добавляй нарочитый сленг, опечатки, эмодзи или выдуманный личный опыт;
 - не добавляй новые факты, ссылки, упоминания, рекламу и призывы к действию;
+- не добавляй перед текстом метки «Комментарий 1», «Комментарий 2», «Вариант 1» и подобные;
 - каждый вариант должен быть самодостаточным, конкретным и не длиннее исходного;
 - варианты должны отличаться по мысли или ракурсу, а не только словами.
 
@@ -96,7 +101,7 @@ POST:
         return data
 
     def validate(self, value: str) -> str:
-        value = value.strip()
+        value = COMMENT_LABEL_RE.sub("", value).strip()
         if not value or len(value) > 700:
             raise ValueError("Generated comment is empty or too long")
         if URL_RE.search(value):
