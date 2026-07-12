@@ -6,30 +6,45 @@ from datetime import datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 import structlog
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
-from telegram.ext import Application, CallbackQueryHandler, ContextTypes
+from telegram import ForceReply, InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes, MessageHandler, filters
 
 log = structlog.get_logger()
 
 
 class ApprovalBot:
-    def __init__(self, settings, db):
-        self.settings, self.db = settings, db
+    def __init__(self, settings, db, generator):
+        self.settings, self.db, self.generator = settings, db, generator
         self.app = Application.builder().token(settings.approval_bot_token).build()
-        self.app.add_handler(CallbackQueryHandler(self.on_action, pattern=r"^(pub|next|skip):\d+$"))
+        self.app.add_handler(CallbackQueryHandler(self.on_action, pattern=r"^(pub|next|edit|skip):\d+$"))
+        self.app.add_handler(CommandHandler("cancel", self.cancel_edit))
+        self.app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self.on_edit_text))
         self.report_task = None
 
     def keyboard(self, post_id):
-        return InlineKeyboardMarkup([[
-            InlineKeyboardButton("Опубликовать", callback_data=f"pub:{post_id}"),
-            InlineKeyboardButton("Другой вариант", callback_data=f"next:{post_id}"),
-            InlineKeyboardButton("Пропустить", callback_data=f"skip:{post_id}"),
-        ]])
+        return InlineKeyboardMarkup([
+            [
+                InlineKeyboardButton("Опубликовать", callback_data=f"pub:{post_id}"),
+                InlineKeyboardButton("Другой вариант", callback_data=f"next:{post_id}"),
+            ],
+            [
+                InlineKeyboardButton("Редактировать", callback_data=f"edit:{post_id}"),
+                InlineKeyboardButton("Пропустить", callback_data=f"skip:{post_id}"),
+            ],
+        ])
+
+    @staticmethod
+    def approval_body(post, variants):
+        idx = post["selected_variant"]
+        return (
+            f"Канал: {post['channel_title']}\n\nПост:\n{post['text'][:1500]}"
+            f"\n\nВариант {idx + 1}/{len(variants)}:\n{variants[idx]}"
+        )
 
     async def send_for_approval(self, post_id: int):
         post = await self.db.one("SELECT * FROM posts WHERE id=?", (post_id,))
         variants = json.loads(post["variants_json"])
-        body = f"Канал: {post['channel_title']}\n\nПост:\n{post['text'][:1500]}\n\nВариант 1/2:\n{variants[0]}"
+        body = self.approval_body(post, variants)
         for user_id in self.settings.approver_user_ids:
             await self.app.bot.send_message(user_id, body, reply_markup=self.keyboard(post_id))
 
@@ -46,8 +61,25 @@ class ApprovalBot:
         if action == "next":
             idx = (post["selected_variant"] + 1) % len(variants)
             await self.db.execute("UPDATE posts SET selected_variant=? WHERE id=?", (idx, post_id))
-            await q.edit_message_text(f"Канал: {post['channel_title']}\n\nПост:\n{post['text'][:1500]}\n\nВариант {idx+1}/2:\n{variants[idx]}", reply_markup=self.keyboard(post_id))
+            post["selected_variant"] = idx
+            await q.edit_message_text(self.approval_body(post, variants), reply_markup=self.keyboard(post_id))
             await q.answer(); return
+        if action == "edit":
+            context.user_data["edit_post_id"] = post_id
+            context.user_data["edit_chat_id"] = q.message.chat_id
+            context.user_data["edit_message_id"] = q.message.message_id
+            await q.answer()
+            await q.message.reply_text(
+                "Скопируйте комментарий ниже, отредактируйте и отправьте ответом. Для отмены: /cancel"
+            )
+            await q.message.reply_text(
+                variants[post["selected_variant"]],
+                reply_markup=ForceReply(
+                    selective=True,
+                    input_field_placeholder="Отредактированный комментарий",
+                ),
+            )
+            return
         if action == "skip":
             await self.db.execute("UPDATE posts SET status='skipped' WHERE id=?", (post_id,))
             await q.edit_message_reply_markup(None); await q.answer("Пропущено"); return
@@ -58,6 +90,48 @@ class ApprovalBot:
         await self.db.execute("UPDATE posts SET status='scheduled', scheduled_at=? WHERE id=?", (scheduled.isoformat(), post_id))
         await q.edit_message_reply_markup(None)
         await q.answer(f"Запланировано через {delay} сек.")
+
+    async def on_edit_text(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if update.effective_user.id not in self.settings.approver_user_ids:
+            return
+        post_id = context.user_data.get("edit_post_id")
+        if not post_id:
+            return
+        post = await self.db.one("SELECT * FROM posts WHERE id=?", (post_id,))
+        if not post or post["status"] != "pending":
+            self.clear_edit(context)
+            await update.message.reply_text("Карточка уже обработана, редактирование отменено.")
+            return
+        try:
+            edited = self.generator.validate(update.message.text)
+        except ValueError as exc:
+            await update.message.reply_text(f"Текст не прошёл проверку: {exc}\nПришлите исправленный вариант.")
+            return
+
+        variants = json.loads(post["variants_json"])
+        variants[post["selected_variant"]] = edited
+        await self.db.execute(
+            "UPDATE posts SET variants_json=? WHERE id=?",
+            (json.dumps(variants, ensure_ascii=False), post_id),
+        )
+        await self.app.bot.edit_message_text(
+            chat_id=context.user_data["edit_chat_id"],
+            message_id=context.user_data["edit_message_id"],
+            text=self.approval_body(post, variants),
+            reply_markup=self.keyboard(post_id),
+        )
+        self.clear_edit(context)
+        await update.message.reply_text("Комментарий обновлён. Теперь его можно опубликовать.")
+
+    async def cancel_edit(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if context.user_data.get("edit_post_id"):
+            self.clear_edit(context)
+            await update.message.reply_text("Редактирование отменено.")
+
+    @staticmethod
+    def clear_edit(context):
+        for key in ("edit_post_id", "edit_chat_id", "edit_message_id"):
+            context.user_data.pop(key, None)
 
     async def start(self):
         await self.app.initialize(); await self.app.start(); await self.app.updater.start_polling(drop_pending_updates=True)

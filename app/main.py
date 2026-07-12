@@ -16,8 +16,9 @@ async def main():
     structlog.configure(processors=[structlog.processors.TimeStamper(fmt="iso"), structlog.processors.JSONRenderer()])
     db = Database(settings.database_path)
     await db.init()
-    bot = ApprovalBot(settings, db)
-    service = CommenterService(settings, db, CommentGenerator(settings), bot)
+    generator = CommentGenerator(settings)
+    bot = ApprovalBot(settings, db, generator)
+    service = CommenterService(settings, db, generator, bot)
     await bot.start()
     try:
         await service.start()
@@ -27,4 +28,3 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
-
