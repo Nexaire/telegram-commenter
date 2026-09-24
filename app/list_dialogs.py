@@ -27,6 +27,17 @@ async def main():
         raise RuntimeError(
             "Telegram session is not authorized. Run python -m app.init_session first."
         )
+    me = await client.get_me()
+    account_name = " ".join(
+        value
+        for value in (getattr(me, "first_name", None), getattr(me, "last_name", None))
+        if value
+    )
+    account_username = getattr(me, "username", None)
+    print(
+        f"ACCOUNT: {account_name or '-'} "
+        f"(@{account_username if account_username else '-'}, id={me.id})"
+    )
     print("PEER_ID\tTYPE\tUSERNAME\tTITLE")
     async for dialog in client.iter_dialogs():
         entity = dialog.entity
