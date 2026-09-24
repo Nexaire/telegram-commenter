@@ -66,6 +66,9 @@ class CoverMonitorService:
             require_intent=matching.get("require_intent", False),
         )
         await self.client.start()
+        # Заполняет entity cache, чтобы числовые ID приватных каналов и групп
+        # надёжно разрешались после создания или добавления аккаунта.
+        await self.client.get_dialogs()
         self.target = await self.client.get_entity(config["target_channel"])
 
         for item in config["sources"]:
