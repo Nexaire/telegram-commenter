@@ -9,16 +9,12 @@ def test_public_message_url():
 
 
 def test_private_supergroup_message_url():
-    entity = SimpleNamespace(
-        username=None, id=123456, megagroup=True, broadcast=False
-    )
+    entity = SimpleNamespace(username=None, id=123456, megagroup=True, broadcast=False)
     assert message_url(entity, 42) == "https://t.me/c/123456/42"
 
 
 def test_basic_private_chat_has_no_link():
-    entity = SimpleNamespace(
-        username=None, id=123456, megagroup=False, broadcast=False
-    )
+    entity = SimpleNamespace(username=None, id=123456, megagroup=False, broadcast=False)
     assert message_url(entity, 42) is None
 
 
@@ -29,3 +25,4 @@ def test_notification_escapes_html_and_fits_telegram_limit():
     assert "&lt;script&gt;" in body
     assert "A &lt; B" in body
     assert len(body) <= 4096
+    assert "Открыть исходное сообщение" not in body

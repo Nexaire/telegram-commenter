@@ -1,4 +1,6 @@
 telethon==1.40.0
+python-telegram-bot==22.2
+tzdata==2025.2
 aiosqlite==0.21.0
 pydantic-settings==2.10.1
 PyYAML==6.0.2

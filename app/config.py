@@ -1,6 +1,7 @@
 from pathlib import Path
 
 import yaml
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -16,6 +17,27 @@ class Settings(BaseSettings):
     dry_run: bool = True
     monitor_lookback_hours: int = 24
     monitor_poll_seconds: int = 300
+    lead_bot_token: str | None = None
+    manager_user_ids: str = ""
+    report_timezone: str = "Europe/Moscow"
+    report_hour: int = Field(default=9, ge=0, le=23)
+    report_minute: int = Field(default=0, ge=0, le=59)
+
+    @property
+    def manager_ids(self) -> set[int]:
+        try:
+            result = {
+                int(value.strip())
+                for value in self.manager_user_ids.split(",")
+                if value.strip()
+            }
+        except ValueError as exc:
+            raise ValueError(
+                "MANAGER_USER_IDS must contain comma-separated numeric Telegram IDs"
+            ) from exc
+        if not result:
+            raise ValueError("At least one MANAGER_USER_IDS value is required")
+        return result
 
     def monitor_config(self) -> dict:
         path = Path(self.channels_config)
