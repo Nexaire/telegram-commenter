@@ -4,4 +4,4 @@ data/
 __pycache__/
 *.pyc
 .venv/
-
+.uv-work/

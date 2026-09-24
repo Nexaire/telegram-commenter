@@ -1,9 +1,9 @@
 services:
   commenter:
+    container_name: telegram-cover-monitor
     build: .
     restart: unless-stopped
     env_file: .env
     volumes:
       - ./data:/data
       - ./config:/app/config:ro
-

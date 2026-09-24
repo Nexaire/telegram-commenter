@@ -1,32 +1,47 @@
 import re
+from dataclasses import dataclass
+
+SPACE_RE = re.compile(r"\s+")
+DASH_RE = re.compile(r"[‐‑‒–—−]")
 
 
-LEAD_PATTERNS = {
-    "цена": (
-        re.compile(r"\b(?:сколько|поч[её]м)\b.{0,45}\b(?:стоит|будет|выйдет|обойд[её]тся)\b", re.I),
-        re.compile(r"\b(?:цена|стоимость|прайс|бюджет)\b", re.I),
-    ),
-    "доставка": (
-        re.compile(r"\b(?:как|можно ли|реально ли)\b.{0,45}\b(?:привезти|доставить|заказать)\b", re.I),
-        re.compile(r"\b(?:доставк\w*|привезти|растамож\w*|таможн\w*)\b", re.I),
-    ),
-    "покупка": (
-        re.compile(r"\b(?:хочу|планирую|думаю)\b.{0,35}\b(?:купить|заказать|взять)\b", re.I),
-        re.compile(r"\b(?:где|как)\b.{0,35}\b(?:купить|заказать|оформить)\b", re.I),
-        re.compile(r"\bможно\s+(?:купить|заказать|оформить)\b", re.I),
-    ),
-    "срок": (
-        re.compile(r"\bсколько\b.{0,30}\b(?:ждать|везти|ид[её]т)\b", re.I),
-        re.compile(r"\b(?:срок|сроки)\b.{0,30}\b(?:доставки|поставки|ожидания)\b", re.I),
-    ),
-}
+def normalize(text: str) -> str:
+    """Normalize Telegram text for case-insensitive phrase matching."""
+    text = DASH_RE.sub("-", text.casefold().replace("ё", "е"))
+    return SPACE_RE.sub(" ", text).strip()
 
 
-def detect_lead(text: str) -> list[str]:
-    """Return matched commercial-intent categories without using an external LLM."""
-    normalized = " ".join(text.split())
-    return [
-        category
-        for category, patterns in LEAD_PATTERNS.items()
-        if any(pattern.search(normalized) for pattern in patterns)
-    ]
+@dataclass(frozen=True)
+class MatchResult:
+    keywords: tuple[str, ...]
+    intents: tuple[str, ...]
+
+
+class CoverRequestDetector:
+    def __init__(
+        self,
+        keywords: list[str],
+        intent_phrases: list[str] | None = None,
+        exclude_phrases: list[str] | None = None,
+        require_intent: bool = False,
+    ):
+        self.keywords = tuple(normalize(value) for value in keywords if value.strip())
+        self.intents = tuple(normalize(value) for value in (intent_phrases or []) if value.strip())
+        self.excludes = tuple(normalize(value) for value in (exclude_phrases or []) if value.strip())
+        self.require_intent = require_intent
+        if not self.keywords:
+            raise ValueError("matching.keywords must contain at least one phrase")
+        if require_intent and not self.intents:
+            raise ValueError("matching.intent_phrases are required when require_intent=true")
+
+    def detect(self, text: str) -> MatchResult | None:
+        normalized = normalize(text)
+        if not normalized or any(phrase in normalized for phrase in self.excludes):
+            return None
+        keywords = tuple(phrase for phrase in self.keywords if phrase in normalized)
+        if not keywords:
+            return None
+        intents = tuple(phrase for phrase in self.intents if phrase in normalized)
+        if self.require_intent and not intents:
+            return None
+        return MatchResult(keywords=keywords, intents=intents)

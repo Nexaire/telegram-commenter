@@ -1,6 +1,48 @@
-channels:
-  # Public username or a numeric Telegram entity ID accessible to the user account.
-  - username: example_channel
+# Канал, куда будут публиковаться найденные заявки.
+# Пользовательский аккаунт из TELEGRAM_SESSION должен иметь право писать сюда.
+target_channel: nexaire_cover_leads
+
+matching:
+  keywords:
+    # Стемы «кавер-групп» и «кавер групп» ловят группа/группу/группы.
+    - "кавер-групп"
+    - "кавер групп"
+    - "кавер-бэнд"
+    - "кавер бэнд"
+    - "cover band"
+
+  # По умолчанию достаточно одной ключевой фразы. Поставьте true,
+  # если нужно дополнительно требовать «ищем/нужна/на свадьбу» и т. п.
+  require_intent: false
+  intent_phrases:
+    - "ищем"
+    - "ищу"
+    - "нужна"
+    - "нужен"
+    - "нужны"
+    - "требуется"
+    - "требуются"
+    - "посоветуйте"
+    - "порекомендуйте"
+    - "кто может"
+    - "на свадьбу"
+    - "на корпоратив"
+    - "на мероприятие"
+    - "на праздник"
+    - "на юбилей"
+    - "на выпускной"
+
+  exclude_phrases:
+    - "мы кавер-группа"
+    - "мы кавер группа"
+    - "наша кавер-группа"
+    - "наша кавер группа"
+    - "в нашей кавер-группе"
+    - "в нашей кавер группе"
+
+sources:
+  # Публичный username без https://t.me/. Можно указать доступный entity ID.
+  - entity: example_channel
     enabled: false
-    lead_monitor: true
-    expertise: "AI automation and business processes"
+  - entity: example_group
+    enabled: false

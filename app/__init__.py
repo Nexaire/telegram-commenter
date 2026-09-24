@@ -1,2 +1,1 @@
-"""Semi-automatic Telegram commenter."""
-
+"""Telegram monitor for cover-band requests."""
