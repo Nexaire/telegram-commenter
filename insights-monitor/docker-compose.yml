@@ -1,0 +1,9 @@
+services:
+  insights:
+    container_name: telegram-insights
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - ./data:/data
+      - ./config:/app/config:ro

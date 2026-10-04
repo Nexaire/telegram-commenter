@@ -1,0 +1,15 @@
+target_chat: -1004421917588
+
+sources:
+  - entity: aa_online_chat
+    enabled: true
+  - entity: doctorkisler
+    enabled: true
+  - entity: trezvyiy_dom
+    enabled: true
+  - entity: livestoriesTD
+    enabled: true
+
+analysis:
+  min_message_length: 30
+  confidence_threshold: 0.60
