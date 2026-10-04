@@ -70,6 +70,7 @@ GIGACHAT_API_BASE=https://api.giga.chat
 
 ~~~bash
 mkdir -p data
+sudo chown -R 10001:10001 data
 docker compose build
 docker compose run --rm insights python -m app.init_session
 ~~~
