@@ -158,7 +158,7 @@ matching:
     - "наша кавер группа"
 
 sources:
-  - entity: anketaEM
+  - entity: -1001612849795
     enabled: true
   - entity: -1001297680727
     enabled: true

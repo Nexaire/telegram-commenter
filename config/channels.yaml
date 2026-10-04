@@ -46,7 +46,7 @@ matching:
 
 sources:
   # Публичный username без https://t.me/. Можно указать доступный entity ID.
-  - entity: anketaEM
+  - entity: -1001612849795
     enabled: true
   - entity: example_channel
     enabled: false
