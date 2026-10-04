@@ -135,6 +135,9 @@ matching:
     - "кавер-бэнд"
     - "кавер бэнд"
     - "cover band"
+    - "бас-гитар"
+    - "бас гитар"
+    - "бас"
 
   require_intent: false
   intent_phrases:

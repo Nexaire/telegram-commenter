@@ -50,5 +50,21 @@ def test_can_match_keyword_without_intent():
     assert detector.detect("Подскажите контакты: кавер-группа") is not None
 
 
+@pytest.mark.parametrize(
+    "text",
+    [
+        "На завтра нужен бас",
+        "Ищем бас-гитару в состав",
+        "Требуется бас гитарист на замену",
+        "Нужен бас-гитарист на концерт",
+    ],
+)
+def test_detects_bass_requests(text):
+    detector = CoverRequestDetector(
+        keywords=["бас-гитар", "бас гитар", "бас"], require_intent=False
+    )
+    assert detector.detect(text) is not None
+
+
 def test_normalizes_case_whitespace_yo_and_dash():
     assert normalize(" КАВЕР—ГРУППА\nЁлка ") == "кавер-группа елка"
